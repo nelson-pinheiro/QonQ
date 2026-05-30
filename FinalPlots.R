@@ -42,8 +42,13 @@ p_prices <- ggplot(df_prices_plot, aes(x = Date)) +
         axis.title.y.right = element_text(color = "#b2182b")) +
   scale_x_date(date_labels = "%Y", date_breaks = "1 year")
 
+# Fallback defensivo (caso o script rode isolado, sem LoadData.R antes)
+if (!exists("SUF_FONTE")) SUF_FONTE <- ""
+
 # Exibição e Salvamento
 print(p_prices)
-ggsave("Resultados/Figuras/Precos_BTC_VIX_EixoDuplo.png", p_prices, width = 10, height = 6)
+ggsave(file.path("Resultados/Figuras",
+                 paste0("Precos_BTC_VIX_EixoDuplo", SUF_FONTE, ".png")),
+       p_prices, width = 10, height = 6)
 
 cat("   [OK] Gráfico de preços salvo em Resultados/Figuras/\n")

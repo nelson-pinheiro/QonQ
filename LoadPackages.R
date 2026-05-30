@@ -7,7 +7,7 @@ packages <- c(
   "ConnectednessApproach", "tseries", "moments",
   "openxlsx", "ggplot2", "reshape2", "lubridate",
   "timeDate", "RColorBrewer", "gridExtra", "scales", 
-  "FinTS", "rprojroot"
+  "FinTS", "rprojroot", "crypto2"
 )
 
 missing <- setdiff(packages, rownames(installed.packages()))
