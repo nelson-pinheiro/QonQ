@@ -69,7 +69,8 @@ get_crypto_cmc <- function(from, to, slug = CRYPTO_CMC_SLUG, symbol = CRYPTO_SYM
 
   moedas  <- crypto2::crypto_list(only_active = TRUE)
   coin    <- moedas[moedas$slug == slug, , drop = FALSE]
-  stopifnot(paste0(symbol, " (slug='", slug, "') nao encontrado no catalogo CMC") = nrow(coin) == 1L)
+  if (nrow(coin) != 1L)
+    stop(paste0(symbol, " (slug='", slug, "') nao encontrado no catalogo CMC"), call. = FALSE)
 
   hist <- crypto2::crypto_history(
     coin_list  = coin,
