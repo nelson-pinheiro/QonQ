@@ -1,0 +1,338 @@
+## # Quantile-on-quantile connectedness approach
+##  Modificado por Nelson Pinheiro (nelson.pinheiro@gmail.com)  a partir de 
+##  Gabauer, David (2022). ConnectednessApproach.
+##  R package version 1.0.0. https://CRAN.R-project.org/package=ConnectednessApproach
+
+cat("\014")  # limpa o console do RStudio
+inicio <- Sys.time()
+
+## Carregando bibliotecas necessárias
+
+# --- Script: instalar e carregar pacotes necessários (robusto) ---
+required_pkgs <- c(
+  "zoo",
+  "knitr",
+  "ggplot2",
+  "reshape2",
+  "devtools",         # se preferir remotes, o código lida com ambos
+  "RColorBrewer",
+  "quantmod",
+  "xts",
+  "TTR",
+  "lubridate",
+  "timeDate",
+  "openxlsx",
+  "ConnectednessApproach"
+)
+
+# helper para carregar com mensagens suprimidas
+load_pkg <- function(pkg) {
+  suppressPackageStartupMessages(
+    library(pkg, character.only = TRUE, quietly = TRUE, warn.conflicts = FALSE)
+  )
+  invisible(pkg)
+}
+
+# identifica pacotes faltantes
+installed <- rownames(installed.packages())
+missing_pkgs <- setdiff(required_pkgs, installed)
+
+if (length(missing_pkgs) > 0) {
+  message("Pacotes ausentes detectados: ", paste(missing_pkgs, collapse = ", "))
+  message("Tentando instalar via CRAN...")
+  # tenta instalar via CRAN (semask interactive prompts)
+  install.packages(missing_pkgs, dependencies = TRUE, repos = "https://cloud.r-project.org")
+  
+  # re-checa
+  still_missing <- setdiff(missing_pkgs, rownames(installed.packages()))
+  if (length(still_missing) > 0) {
+    message("Ainda faltando após tentativa CRAN: ", paste(still_missing, collapse = ", "))
+    # assegura que remotes/devtools esteja disponível para instalar do GitHub
+    if (!("remotes" %in% rownames(installed.packages()))) {
+      message("Instalando 'remotes' para permitir instalação via GitHub...")
+      install.packages("remotes", repos = "https://cloud.r-project.org")
+    }
+    # tenta instalar pacotes faltantes possivelmente hospedados no GitHub
+    for (pkg in still_missing) {
+      # tratar ConnectednessApproach especificamente (fallback GitHub)
+      if (pkg == "ConnectednessApproach") {
+        # tentativa de instalar do CRAN já foi feita; agora GitHub (autor: dgabauer)
+        tryCatch({
+          remotes::install_github("dgabauer/ConnectednessApproach", dependencies = TRUE, upgrade = "never")
+        }, error = function(e) {
+          warning("Falha ao instalar ConnectednessApproach do GitHub: ", conditionMessage(e))
+        })
+      } else {
+        # tentativa genérica via remotes::install_cran (já tentou install.packages,
+        # aqui só para segurança — se o pacote estiver em um repo alternativo, melhor instalar manualmente)
+        tryCatch({
+          remotes::install_cran(pkg, dependencies = TRUE)
+        }, error = function(e) {
+          warning("Falha ao instalar via remotes::install_cran para ", pkg, ": ", conditionMessage(e))
+        })
+      }
+    }
+  }
+}
+
+# agora carrega todos os pacotes (se disponíveis)
+loaded <- c()
+for (p in required_pkgs) {
+  if (p %in% rownames(installed.packages())) {
+    tryCatch({
+      load_pkg(p)
+      loaded <- c(loaded, p)
+    }, error = function(e) {
+      warning("Erro ao carregar ", p, ": ", conditionMessage(e))
+    })
+  } else {
+    warning("Pacote não instalado: ", p)
+  }
+}
+
+message("Pacotes carregados: ", paste(loaded, collapse = ", "))
+# imprimir info de sessão curta (útil para reprodução)
+cat("\nSession info (resumo):\n")
+cat("R version: ", R.version.string, "\n")
+cat("Locale: ", Sys.getlocale(), "\n")
+cat("Loaded packages versions:\n")
+for (p in loaded) {
+  ver <- tryCatch(as.character(packageVersion(p)), error = function(e) "NA")
+  cat(sprintf(" - %s: %s\n", p, ver))
+}
+
+
+install_github("GabauerDavid/ConnectednessApproach")
+# --- Fim da carga de bibliotecas
+#___________________________________________________________________________________________________________________
+#___________________________________________________________________________________________________________________
+
+
+
+
+
+
+# Carregar dados 
+
+
+# ==== 1) parâmetros ====
+
+# 18/01/2023 é a dada 200 dias uteis (incluindo feriados antes de 10/01/2024 inicio de ETP de spot de Bitvoin )
+# periodos estudadois 
+
+# TOTAL  ->        18/09/2014 - 27/09/2025
+# PÓS-ETF ->       14/03/2023 - 27/09/2025
+# PRÉ-ETF ->       18/09/2014 -  09/01/2024
+# PRE-COVID ->     18-09-2014 - 01/01/2020  
+start_date <- as.Date("2014-09-18") 
+end_date   <- as.Date("2020-01-01")  #Sys.Date()   # ajuste se quiser um fim específico
+# Sufixo AAAAMMDD_AAAAMMDD para nomes de arquivos
+period_tag <- sprintf("%s_%s",
+                      format(start_date, "%Y%m%d"),
+                      format(end_date,   "%Y%m%d"))
+cat(period_tag)
+excel_file <- sprintf("btc_vix_bizdays_%s.xlsx", period_tag)
+
+coerce_excel_date <- function(x) {
+  if (inherits(x, "Date")) return(x)
+  if (is.numeric(x)) return(as.Date(x, origin = "1899-12-30"))  # origem Excel
+  as.Date(x)                                                   # ISO "yyyy-mm-dd"
+}
+
+# ==== 2) carregar de Excel se existir; caso contrário, baixar e processar ====
+if (file.exists(excel_file)) {
+  message("Excel encontrado: '", excel_file, "'. Pulando download e usando dados do arquivo.")
+  
+  # Ler abas
+  df_rets <- openxlsx::read.xlsx(excel_file, sheet = "Returns_bizdays", detectDates = TRUE)
+  df_px   <- tryCatch(openxlsx::read.xlsx(excel_file, sheet = "Prices_bizdays",detectDates = TRUE),
+                      error = function(e) NULL)
+  
+  # Garantir tipos/nomes esperados
+  stopifnot(all(c("Date","BTC_ret","VIX_ret") %in% colnames(df_rets)))
+  df_rets$Date <- coerce_excel_date(df_rets$Date)
+  if (!is.null(df_px)) df_px$Date <- coerce_excel_date(df_px$Date)
+  
+  merged_rets <- xts::xts(df_rets[, c("BTC_ret","VIX_ret")], order.by = df_rets$Date)
+  colnames(merged_rets) <- c("BTC_ret","VIX_ret")
+  merged_rets <- na.omit(merged_rets)
+  
+  if (!is.null(df_px)) {
+    if (all(c("Date","BTC_close","VIX_close") %in% colnames(df_px))) {
+      df_px$Date <- as.Date(df_px$Date)
+      merged_px  <- xts::xts(df_px[, c("BTC_close","VIX_close")], order.by = df_px$Date)
+    }
+  }
+  
+} else {
+  message("Excel não encontrado. Baixando cotações do Yahoo Finance e processando...")
+  
+  # ==== 2a) baixar preços =====
+  btc_xts <- quantmod::getSymbols("BTC-USD", src = "yahoo",
+                                  from = start_date, to = end_date,
+                                  auto.assign = FALSE)
+  vix_xts <- quantmod::getSymbols("^VIX", src = "yahoo",
+                                  from = start_date, to = end_date,
+                                  auto.assign = FALSE)
+  
+  # ==== 3) preços de fechamento e retornos log ====
+  btc_px <- quantmod::Cl(btc_xts)
+  vix_px <- quantmod::Cl(vix_xts)
+  btc_ret <- diff(log(btc_px))
+  vix_ret <- diff(log(vix_px))
+  
+  # ==== 4) calendário de dias úteis NYSE (sem fins de semana e feriados EUA) ====
+  all_days <- seq(from = start_date, to = end_date, by = "day")
+  is_weekday <- lubridate::wday(all_days, week_start = 1) <= 5
+  us_holidays <- unique(as.Date(unlist(timeDate::holidayNYSE(unique(lubridate::year(all_days))))))
+  bizdays_idx <- all_days[ is_weekday & !(all_days %in% us_holidays) ]
+  
+  # ==== 5) restringir retornos ao calendário de negócios e mesclar =====
+  btc_ret_biz <- btc_ret[bizdays_idx]
+  vix_ret_biz <- vix_ret[bizdays_idx]
+  merged_rets <- merge(btc_ret_biz, vix_ret_biz, join = "inner")
+  colnames(merged_rets) <- c("BTC_ret","VIX_ret")
+  merged_rets <- na.omit(merged_rets)
+  
+  # ==== 6) (opcional) preços alinhados ao mesmo calendário =====
+  btc_px_biz <- btc_px[bizdays_idx]
+  vix_px_biz <- vix_px[bizdays_idx]
+  merged_px  <- merge(btc_px_biz, vix_px_biz, join = "inner")
+  colnames(merged_px) <- c("BTC_close","VIX_close")
+  
+  # ==== 7) exportar para Excel =====
+  df_rets <- data.frame(Date = as.Date(index(merged_rets)), coredata(merged_rets))
+  df_px   <- data.frame(Date = as.Date(index(merged_px)),   coredata(merged_px))
+  openxlsx::write.xlsx(
+    x = list("Returns_bizdays" = df_rets,
+             "Prices_bizdays"  = df_px),
+    file = excel_file,
+    overwrite = TRUE
+  )
+  message("Arquivo Excel salvo em: ", normalizePath(excel_file))
+}
+
+# ==== 8) preparar 'data' para o loop Q-on-Q =====
+# 'merged_rets' já é xts (herda de zoo) — use-o diretamente ou converta explicitamente para zoo
+data  <- zoo::as.zoo(merged_rets)
+NAMES <- colnames(merged_rets)         # para usar nos gráficos
+cat("Dimensões de 'data':", paste(NROW(data), NCOL(data), collapse = " x "), "\n")
+
+
+#___________________________________________________________________________________________________________________
+#___________________________________________________________________________________________________________________
+# ----- Q-on-Q
+# --- Definição de parâmentros ---
+
+colors = c("black","steelblue4","firebrick")
+palette(colors)
+
+m = 10 # número de quanti considerados
+quantiles = seq(0.05, 0.95,length.out=m)
+print(quantiles)
+
+nlag = 1  # número de lag(s) no VAR/QVAR.
+windowSize = 200 # 90 #150 200 250# tamanho da janela
+window.size = windowSize + nlag
+
+t = nrow(data)  # número de 
+t0 = t - window.size + 1 + nlag
+nfore=20 # horizonte de previsão para decomposições de forecast (usado internamente para a decomposição de variância para medir spillovers).
+
+NET <- TCI <- array(NA_real_, dim = c(t0, m, m), dimnames = list(NULL, quantiles, quantiles))
+for (i in 1:m) {
+  print(i)
+  for (j in 1:m) {
+    print(paste0("-", j))
+    dca = suppressMessages(ConnectednessApproach(data, nlag=nlag, nfore=nfore, 
+                                                 model="QVAR", connectedness="Time",
+                                                 window.size=window.size, corrected=TRUE,
+                                                 VAR_config=list(QVAR=list(tau=c(quantiles[i], quantiles[j])))))
+    TCI[,i,j] = dca$TCI
+    NET[,i,j] = dca$NET[,1]
+  }
+}
+
+TCI_agg = round(apply(TCI,2:3,mean),1)
+NET_agg = round(apply(NET,2:3,mean),1)
+melted_TCI_agg = data.frame(melt(TCI_agg))
+
+## Dynamic quantile-on-quantile total connectedness
+p_DQonQTC <-ggplot(data = melted_TCI_agg, aes(x=Var2, y=Var1, fill=value)) + 
+  geom_tile(color = "black") + 
+  geom_text(aes(label = value), color = "black", size = 4) + 
+  labs(x=NAMES[2],y=NAMES[1],color="",title="") + guides(fill=guide_legend(title="TCI")) + 
+  scale_fill_gradientn(colours=c("white", "steelblue4"), limits=c(min(melted_TCI_agg[,3]), max(abs(melted_TCI_agg))))
+print (p_DQonQTC)
+
+
+## Net quantile-on-quantile total directional connectedness
+melted_NET_agg = data.frame(melt(NET_agg))
+p_DQonQTDC <- ggplot(data = melted_NET_agg, aes(x=Var2, y=Var1, fill=value)) + 
+  geom_tile(color = "black") + 
+  geom_text(aes(label = value), color = "black", size = 4) + 
+  labs(x=NAMES[2],y=NAMES[1],color="",title="") +guides(fill=guide_legend(title="NET")) + 
+  scale_fill_gradientn(colours=c("gold4", "white", "steelblue4"), limits=c(-max(abs(melted_NET_agg)), max(abs(melted_NET_agg))))
+print (p_DQonQTDC)
+
+
+net = FROM = TO = array(NA,c(t0,m))
+nTCI = pTCI = array(NA,c(t0,1))
+for (i in 1:t0) {
+  pTCI[i,] = mean(diag(TCI[i,,]))
+  nTCI[i,] = mean(diag(TCI[i,m:1,]))
+  FROM[i,] = rowMeans(TCI[i,,])
+  TO[i,] = colMeans(TCI[i,,])
+  net[i,] = TO[i,] - FROM[i,]
+}
+dates = as.Date(tail(index(data), t0))
+
+TCI_df = data.frame(Date=dates,"Reverse TCI"=nTCI,"Direct TCI"=pTCI, "ΔTCI"=nTCI-pTCI)
+colnames(TCI_df) = c("Date","Reverse TCI","Direct TCI",paste0("\u0394 TCI"))
+TCI_melted = melt(TCI_df, id.vars = "Date")
+
+
+
+
+net = FROM = TO = array(NA,c(t0,m))
+nTCI = pTCI = array(NA,c(t0,1))
+for (i in 1:t0) {
+  pTCI[i,] = mean(diag(TCI[i,,]))
+  nTCI[i,] = mean(diag(TCI[i,m:1,]))
+  FROM[i,] = rowMeans(TCI[i,,])
+  TO[i,] = colMeans(TCI[i,,])
+  net[i,] = TO[i,] - FROM[i,]
+}
+dates = as.Date(tail(index(data), t0))
+
+TCI_df = data.frame(Date=dates,"Reverse TCI"=nTCI,"Direct TCI"=pTCI, "ΔTCI"=nTCI-pTCI)
+colnames(TCI_df) = c("Date","Reverse TCI","Direct TCI",paste0("\u0394 TCI"))
+TCI_melted = melt(TCI_df, id.vars = "Date")
+
+
+## Directly related and indirectly related total connectedness
+p_DRIRTC <- ggplot(data = TCI_melted, aes(x=Date, y=value, color = variable)) +
+  geom_line() +
+  labs(x = "", y = "", title = "", color="") + geom_hline(yintercept=0, linetype="dotted") + 
+  theme(legend.position="bottom") + ylim(-100,110)  + scale_x_date(expand = c(0,0)) + scale_y_continuous(expand = c(0,12))
+print (p_DRIRTC)
+
+
+
+fig_dir <- "figs"
+if (!dir.exists(fig_dir)) dir.create(fig_dir, recursive = TRUE)
+
+ggsave(file.path(fig_dir, sprintf("fig_TCI_heatmap_%s.png", period_tag)),
+       p_DQonQTC, width = 7, height = 5, dpi = 300)
+
+ggsave(file.path(fig_dir, sprintf("fig_NET_heatmap_%s.png", period_tag)),
+       p_DQonQTDC, width = 7, height = 5, dpi = 300)
+
+ggsave(file.path(fig_dir, sprintf("fig_TCI_series_%s.png", period_tag)),
+       p_DRIRTC, width = 8, height = 4.5, dpi = 300)
+
+
+fim <- Sys.time()
+elapsed <- as.numeric(difftime(fim, inicio, units = "secs"))
+cat(sprintf("Tempo decorrido: %.2f s (%.2f min)\n", elapsed, elapsed/60))
+# --- fim do script ---
