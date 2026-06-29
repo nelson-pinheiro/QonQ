@@ -108,18 +108,18 @@ for (period_name in analysis_periods) {
       # --- 1. HEATMAP TCI ---
       if(!all(is.na(TCI))) {
         melted_TCI <- melt(TCI)
-        colnames(melted_TCI) <- c("Q_BTC", "Q_VIX", "value")
-        melted_TCI$Q_BTC <- as.numeric(as.character(melted_TCI$Q_BTC))
+        colnames(melted_TCI) <- c(paste0("Q_", CRYPTO_SYMBOL), "Q_VIX", "value")
+        melted_TCI[[paste0("Q_", CRYPTO_SYMBOL)]] <- as.numeric(as.character(melted_TCI[[paste0("Q_", CRYPTO_SYMBOL)]]))
         melted_TCI$Q_VIX <- as.numeric(as.character(melted_TCI$Q_VIX))
-        
-        p_TCI <- ggplot(data = melted_TCI, aes(x=Q_VIX, y=Q_BTC, fill=value)) + 
-          geom_tile(color = "white", size=0.2) + 
-          geom_text(aes(label = sprintf("%.2f", value)), color = "black", size = 2.5) + 
-          scale_fill_gradientn(colours=c("white", "#eff3ff", "#bdd7e7", "#6baed6", "#2171b5"), 
+
+        p_TCI <- ggplot(data = melted_TCI, aes(x=Q_VIX, y=.data[[paste0("Q_", CRYPTO_SYMBOL)]], fill=value)) +
+          geom_tile(color = "white", size=0.2) +
+          geom_text(aes(label = sprintf("%.2f", value)), color = "black", size = 2.5) +
+          scale_fill_gradientn(colours=c("white", "#eff3ff", "#bdd7e7", "#6baed6", "#2171b5"),
                                na.value = "grey90", name="TCI") +
           scale_x_continuous(breaks = quantiles) +
           scale_y_continuous(breaks = quantiles) +
-          labs(x = "Quantis VIX", y = "Quantis BTC", 
+          labs(x = "Quantis VIX", y = paste0("Quantis ", CRYPTO_SYMBOL),
                title = paste0("Total Connectedness (TCI): ", tag)) +
           coord_fixed() + theme_minimal() +
           theme(panel.grid = element_blank())
@@ -131,23 +131,23 @@ for (period_name in analysis_periods) {
       # --- 2. HEATMAP NET (COM VALORES) ---
       if(!all(is.na(NET))) {
         melted_NET <- melt(NET)
-        colnames(melted_NET) <- c("Q_BTC", "Q_VIX", "value")
-        melted_NET$Q_BTC <- as.numeric(as.character(melted_NET$Q_BTC))
+        colnames(melted_NET) <- c(paste0("Q_", CRYPTO_SYMBOL), "Q_VIX", "value")
+        melted_NET[[paste0("Q_", CRYPTO_SYMBOL)]] <- as.numeric(as.character(melted_NET[[paste0("Q_", CRYPTO_SYMBOL)]]))
         melted_NET$Q_VIX <- as.numeric(as.character(melted_NET$Q_VIX))
-        
+
         max_abs <- max(abs(melted_NET$value), na.rm=TRUE)
-        if(max_abs == 0) max_abs <- 1 
-        
-        p_NET <- ggplot(data = melted_NET, aes(x=Q_VIX, y=Q_BTC, fill=value)) + 
-          geom_tile(color = "white", size=0.2) + 
-          geom_text(aes(label = sprintf("%.2f", value)), color = "black", size = 2.5) + 
-          scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac", 
-                               midpoint = 0, limit = c(-max_abs, max_abs), space = "Lab", 
+        if(max_abs == 0) max_abs <- 1
+
+        p_NET <- ggplot(data = melted_NET, aes(x=Q_VIX, y=.data[[paste0("Q_", CRYPTO_SYMBOL)]], fill=value)) +
+          geom_tile(color = "white", size=0.2) +
+          geom_text(aes(label = sprintf("%.2f", value)), color = "black", size = 2.5) +
+          scale_fill_gradient2(low = "#b2182b", mid = "white", high = "#2166ac",
+                               midpoint = 0, limit = c(-max_abs, max_abs), space = "Lab",
                                na.value = "grey90", name = "NET") +
           scale_x_continuous(breaks = quantiles) +
           scale_y_continuous(breaks = quantiles) +
-          labs(x = "Quantis VIX", y = "Quantis BTC", 
-               title = paste0("Net Spillovers BTC: ", tag),
+          labs(x = "Quantis VIX", y = paste0("Quantis ", CRYPTO_SYMBOL),
+               title = paste0("Net Spillovers ", CRYPTO_SYMBOL, ": ", tag),
                subtitle = "Azul (>0): Exportador Líquido | Vermelho (<0): Importador Líquido") +
           coord_fixed() + theme_minimal() +
           theme(panel.grid = element_blank())

@@ -1,16 +1,32 @@
 # =============================================================================
-# CARREGAMENTO DE DADOS 
+# CARREGAMENTO DE DADOS
 # =============================================================================
 
 cat(">>> Carregando dados...\n")
 
 # -----------------------------------------------------------------------------
+# CONFIGURAÇÃO DO ATIVO CRIPTO (editável)
+#   CRYPTO_SYMBOL   : símbolo do ativo usado em nomes de coluna e arquivos
+#                     Ex: "BTC", "ETH", "SOL", "BNB"
+#   CRYPTO_CMC_SLUG : slug no CoinMarketCap (usado quando FONTE_CRYPTO="cmc")
+#                     Ex: "bitcoin", "ethereum", "solana", "binancecoin"
+#   CRYPTO_YAHOO    : ticker no Yahoo Finance (usado quando FONTE_CRYPTO="yahoo")
+#                     Ex: "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD"
+#   CRYPTO_LABEL    : nome por extenso para títulos de gráficos
+#                     Ex: "Bitcoin", "Ethereum", "Solana"
+# -----------------------------------------------------------------------------
+CRYPTO_SYMBOL   <- "BTC"
+CRYPTO_CMC_SLUG <- "bitcoin"
+CRYPTO_YAHOO    <- "BTC-USD"
+CRYPTO_LABEL    <- "Bitcoin"
+
+# -----------------------------------------------------------------------------
 # CONFIGURAÇÃO DE FONTE (editável)
-#   "yahoo" -> getSymbols("BTC-USD") via quantmod   (comportamento original)
-#   "cmc"   -> CoinMarketCap via pacote crypto2 (Rota A)
+#   "yahoo" -> getSymbols via quantmod
+#   "cmc"   -> CoinMarketCap via pacote crypto2
 # Observação: o VIX SEMPRE vem do Yahoo (índice CBOE, indisponível no CMC).
 # -----------------------------------------------------------------------------
-FONTE_BTC <- "cmc"   # alterne entre "yahoo" e "cmc"
+FONTE_CRYPTO <- "cmc"   # alterne entre "yahoo" e "cmc"
 
 # Definição de datas
 start_date <- as.Date("2014-09-18")
@@ -42,28 +58,28 @@ write_xts_xlsx <- function(x, filename, out_dir) {
 }
 
 # -----------------------------------------------------------------------------
-# Função: obtém BTC via CoinMarketCap (crypto2) e devolve xts no formato OHLCV
-# compatível com o objeto retornado por quantmod::getSymbols("BTC-USD").
+# Função: obtém cripto via CoinMarketCap (crypto2) e devolve xts no formato
+# OHLCV compatível com o objeto retornado por quantmod::getSymbols.
 # -----------------------------------------------------------------------------
-get_btc_cmc <- function(from, to) {
+get_crypto_cmc <- function(from, to, slug = CRYPTO_CMC_SLUG, symbol = CRYPTO_SYMBOL) {
   if (!requireNamespace("crypto2", quietly = TRUE)) {
     stop("Pacote 'crypto2' ausente. Instale com install.packages('crypto2') e rode renv::snapshot().",
          call. = FALSE)
   }
-  
-  moedas <- crypto2::crypto_list(only_active = TRUE)
-  btc    <- moedas[moedas$slug == "bitcoin", , drop = FALSE]
-  stopifnot("BTC nao encontrado no catalogo CMC" = nrow(btc) == 1L)
-  
+
+  moedas  <- crypto2::crypto_list(only_active = TRUE)
+  coin    <- moedas[moedas$slug == slug, , drop = FALSE]
+  stopifnot(paste0(symbol, " (slug='", slug, "') nao encontrado no catalogo CMC") = nrow(coin) == 1L)
+
   hist <- crypto2::crypto_history(
-    coin_list  = btc,
+    coin_list  = coin,
     convert    = "USD",
     start_date = format(as.Date(from), "%Y-%m-%d"),
     end_date   = format(as.Date(to),   "%Y-%m-%d"),
     interval   = "1d",
     sleep      = 1
   )
-  
+
   # Monta xts com mesmas colunas/nomes que getSymbols produziria.
   # crypto2 nao possui preco "ajustado"; usamos close como Adjusted.
   dts <- as.Date(hist$timestamp)
@@ -76,60 +92,59 @@ get_btc_cmc <- function(from, to) {
     Adjusted = hist$close
   )
   x <- xts::xts(mat, order.by = dts)
-  colnames(x) <- paste0("BTC.", colnames(x))  # BTC.Open, BTC.High, ... BTC.Adjusted
+  colnames(x) <- paste0(symbol, ".", colnames(x))  # ex: BTC.Open, ETH.Close ...
   x <- x[!duplicated(zoo::index(x)), ]
   xts::xts(x, order.by = zoo::index(x))
 }
 
-# Download 
+# Download
 tryCatch({
-  if (identical(FONTE_BTC, "yahoo")) {
-    cat(">>> Fonte BTC: Yahoo Finance (getSymbols)\n")
-    btc_raw <- getSymbols("BTC-USD", src = "yahoo", from = start_date, to = end_date, auto.assign = FALSE)
-  } else if (identical(FONTE_BTC, "cmc")) {
-    cat(">>> Fonte BTC: CoinMarketCap (crypto2 / Rota A)\n")
-    btc_raw <- get_btc_cmc(from = start_date, to = end_date)
+  if (identical(FONTE_CRYPTO, "yahoo")) {
+    cat(sprintf(">>> Fonte %s: Yahoo Finance (getSymbols '%s')\n", CRYPTO_SYMBOL, CRYPTO_YAHOO))
+    crypto_raw <- getSymbols(CRYPTO_YAHOO, src = "yahoo", from = start_date, to = end_date, auto.assign = FALSE)
+  } else if (identical(FONTE_CRYPTO, "cmc")) {
+    cat(sprintf(">>> Fonte %s: CoinMarketCap (crypto2, slug='%s')\n", CRYPTO_SYMBOL, CRYPTO_CMC_SLUG))
+    crypto_raw <- get_crypto_cmc(from = start_date, to = end_date,
+                                 slug = CRYPTO_CMC_SLUG, symbol = CRYPTO_SYMBOL)
   } else {
-    stop("FONTE_BTC invalida: use 'yahoo' ou 'cmc'.", call. = FALSE)
+    stop("FONTE_CRYPTO invalida: use 'yahoo' ou 'cmc'.", call. = FALSE)
   }
-  
+
   # VIX sempre via Yahoo (indice CBOE, indisponivel no CMC)
   vix_raw <- getSymbols("^VIX", src = "yahoo", from = start_date, to = end_date, auto.assign = FALSE)
-}, error=function(e) { 
-  stop("\nErro crítico: Falha no download (", conditionMessage(e), "). Verifique conexão/fonte.\n") 
+}, error=function(e) {
+  stop("\nErro crítico: Falha no download (", conditionMessage(e), "). Verifique conexão/fonte.\n")
 })
 
 # Registro de proveniencia (auditoria)
-attr(btc_raw, "fonte") <- FONTE_BTC
-cat(sprintf(">>> BTC obtido de '%s': %d observações (%s a %s)\n",
-            FONTE_BTC, nrow(btc_raw),
-            format(min(index(btc_raw))), format(max(index(btc_raw)))))
+attr(crypto_raw, "fonte") <- FONTE_CRYPTO
+cat(sprintf(">>> %s obtido de '%s': %d observações (%s a %s)\n",
+            CRYPTO_SYMBOL, FONTE_CRYPTO, nrow(crypto_raw),
+            format(min(index(crypto_raw))), format(max(index(crypto_raw)))))
 
-# Sufixo de fonte para arquivos derivados de BTC (VIX nao recebe: fonte invariante)
-SUF_FONTE <- paste0("_", FONTE_BTC)   # "_yahoo" ou "_cmc"
+# Sufixo de fonte para arquivos derivados do cripto (VIX nao recebe: fonte invariante)
+SUF_FONTE <- paste0("_", FONTE_CRYPTO)   # "_yahoo" ou "_cmc"
 
-write_xts_xlsx(btc_raw, paste0("BTC", SUF_FONTE, ".xlsx"), out_dir)
+write_xts_xlsx(crypto_raw, paste0(CRYPTO_SYMBOL, SUF_FONTE, ".xlsx"), out_dir)
 write_xts_xlsx(vix_raw, "VIX.xlsx", out_dir)   # sem sufixo: sempre Yahoo
 
 # Tratamento e Retornos
-btc_close <- Ad(btc_raw)
-vix_close <- Ad(vix_raw)
+crypto_close <- Ad(crypto_raw)
+vix_close    <- Ad(vix_raw)
 
 # Merge (Garante alinhamento temporal)
-data_merged <- merge(btc_close, vix_close, join="inner")
-colnames(data_merged) <- c("BTC", "VIX") 
+data_merged <- merge(crypto_close, vix_close, join = "inner")
+colnames(data_merged) <- c(CRYPTO_SYMBOL, "VIX")
 data_prices <- na.omit(data_merged)
 
-
 rets <- data_prices
-rets$BTC <- diff(log(data_prices$BTC)) * 100
+rets[[CRYPTO_SYMBOL]] <- diff(log(data_prices[[CRYPTO_SYMBOL]])) * 100
 
 # Retornos Logarítmicos (VARIÁVEL BASE DO MODELO)
-###rets <- diff(log(data_prices)) * 100
 rets <- na.omit(rets)
-NAMES <- colnames(rets) 
+NAMES <- colnames(rets)
 
-write_xts_xlsx(rets, paste0("ret_BTC_VIX_emLinha", SUF_FONTE, ".xlsx"), out_dir)
+write_xts_xlsx(rets, paste0("ret_", CRYPTO_SYMBOL, "_VIX_emLinha", SUF_FONTE, ".xlsx"), out_dir)
 
-cat(sprintf(">>> Dados carregados (fonte BTC: %s). Amostra total: %d observações.\n",
-            FONTE_BTC, nrow(rets)))
+cat(sprintf(">>> Dados carregados (fonte %s: %s). Amostra total: %d observações.\n",
+            CRYPTO_SYMBOL, FONTE_CRYPTO, nrow(rets)))
