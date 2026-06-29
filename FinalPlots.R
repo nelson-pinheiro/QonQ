@@ -7,32 +7,35 @@ cat("\n>>> Gerando Gráfico de Preços (Eixo Duplo)...\n")
 df_prices_plot <- data.frame(Date = index(data_prices), coredata(data_prices))
 
 # Cálculo do fator de escala para o segundo eixo (VIX)
-# O objetivo é "esticar" o VIX para que ele ocupe um espaço visual similar ao BTC
-scale_factor <- max(df_prices_plot$BTC) / max(df_prices_plot$VIX)
+# O objetivo é "esticar" o VIX para que ele ocupe um espaço visual similar ao cripto
+scale_factor <- max(df_prices_plot[[CRYPTO_SYMBOL]]) / max(df_prices_plot$VIX)
+
+crypto_legend_label <- paste0(CRYPTO_LABEL, " (", CRYPTO_SYMBOL, ")")
 
 p_prices <- ggplot(df_prices_plot, aes(x = Date)) +
-  # Linha do BTC (Eixo Y Primário - Esquerda)
-  geom_line(aes(y = BTC, color = "Bitcoin (BTC)"), linewidth = 0.8) +
-  
+  # Linha do cripto (Eixo Y Primário - Esquerda)
+  geom_line(aes(y = .data[[CRYPTO_SYMBOL]], color = crypto_legend_label), linewidth = 0.8) +
+
   # Linha do VIX (Eixo Y Secundário - Direita)
   # Multiplicamos o VIX pelo fator de escala para plotar
   geom_line(aes(y = VIX * scale_factor, color = "VIX Index"), linewidth = 0.8) +
-  
+
   # Definição dos Eixos Y
   scale_y_continuous(
-    name = "Preço Bitcoin (USD)", # Nome do eixo primário
-    labels = scales::dollar_format(), # Formato de moeda
-    # Definição do eixo secundário
-    sec.axis = sec_axis(~ . / scale_factor, name = "VIX Index") # Divide pelo fator para mostrar o valor real
+    name = paste0("Preço ", CRYPTO_LABEL, " (USD)"),
+    labels = scales::dollar_format(),
+    sec.axis = sec_axis(~ . / scale_factor, name = "VIX Index")
   ) +
-  
+
   # Definição das Cores Manuais
-  scale_color_manual(values = c("Bitcoin (BTC)" = "#2166ac", # Azul
-                                "VIX Index" = "#b2182b")) + # Vermelho
-  
+  scale_color_manual(values = setNames(
+    c("#2166ac", "#b2182b"),
+    c(crypto_legend_label, "VIX Index")
+  )) +
+
   # Títulos e Tema
   labs(x = NULL, color = NULL,
-       title = "Evolução de Bitcoin & VIX",
+       title = paste0("Evolução de ", CRYPTO_LABEL, " & VIX"),
        subtitle = "Escalas Verticais Diferentes (Eixo Duplo)") +
   theme_minimal() +
   theme(legend.position = "bottom",
@@ -48,7 +51,7 @@ if (!exists("SUF_FONTE")) SUF_FONTE <- ""
 # Exibição e Salvamento
 print(p_prices)
 ggsave(file.path("Resultados/Figuras",
-                 paste0("Precos_BTC_VIX_EixoDuplo", SUF_FONTE, ".png")),
+                 paste0("Precos_", CRYPTO_SYMBOL, "_VIX_EixoDuplo", SUF_FONTE, ".png")),
        p_prices, width = 10, height = 6)
 
 cat("   [OK] Gráfico de preços salvo em Resultados/Figuras/\n")
