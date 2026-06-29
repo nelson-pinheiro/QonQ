@@ -139,7 +139,7 @@ colnames(data_merged) <- c(CRYPTO_SYMBOL, "VIX")
 data_prices <- na.omit(data_merged)
 
 rets <- data_prices
-rets[[CRYPTO_SYMBOL]] <- diff(log(data_prices[[CRYPTO_SYMBOL]])) * 100
+rets[, CRYPTO_SYMBOL] <- diff(log(data_prices[, CRYPTO_SYMBOL])) * 100
 
 # Retornos Logarítmicos (VARIÁVEL BASE DO MODELO)
 rets <- na.omit(rets)
